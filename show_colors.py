@@ -205,9 +205,19 @@ with open(sys.argv[1], "r") as f:
 
 pc_program['pos'] = lidar 
 
-# Line data
-line_program['pos'] = np.array([[3.648024, -0.420327, -0.135129], [3.414222, -1.281418, -0.067780]])
-line_program['color'] = np.array([[1, 1, 1], [1, 1, 1]])
+# Load line data
+with open(sys.argv[3], "r") as f:
+  line_coords = []
+  line_colors = []
+  for line in f.readlines():
+    values = [float(x) for x in line.split(',')]
+    line_coords.append((values[0], values[1], values[2]))
+    line_coords.append((values[3], values[4], values[5]))
+    line_colors.append((values[6], values[7], values[8]))
+    line_colors.append((values[6], values[7], values[8]))
+
+line_program['pos'] = line_coords 
+line_program['color'] = line_colors 
 
 window = app.Window(width=1280, height=720)
 
