@@ -102,6 +102,38 @@ void main() {
 
 """ 
 
+frag_shader_line = """
+// Parameters from the vertex shader
+varying vec3 eyespacePos;
+varying float eyespaceRadius;
+varying float dist_from_origin;
+varying vec3 clr;
+
+// Uniforms
+uniform mat4 modelview;
+uniform mat4 projection;
+
+void main() {
+  vec3 normal;
+  // See where we are inside the point sprite
+  normal.xy = (gl_PointCoord * 2.0f) - vec2(1.0);
+  float dist = dot(normal.xy, normal.xy);
+
+  gl_FragColor = vec4(clr, 1.0);
+  
+  // Calculate fragment position in eye space, project to find depth
+  vec4 fragPos = vec4(eyespacePos + normal * eyespaceRadius, 1.0);
+  vec4 clipspacePos = projection * fragPos;
+
+  // Set up output
+  float far = gl_DepthRange.far;
+  float near = gl_DepthRange.near;
+  float deviceDepth = clipspacePos.z / clipspacePos.w;
+  float fragDepth = (((far - near) * deviceDepth) + near +far) / 2.0;
+  gl_FragDepth = fragDepth;
+}
+
+""" 
 def magnitude(v):
     return math.sqrt(np.sum(v ** 2))
 
@@ -150,10 +182,14 @@ def perspective(field_of_view_y, aspect, z_near, z_far):
 
 # Create program
 pc_program = gloo.Program(vert_shader, frag_shader)
+line_program = gloo.Program(vert_shader, frag_shader_line)
 
 # Load uniforms
-pc_program['modelview'] = lookat(np.array([0, -7, 0.25]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
+pc_program['modelview'] = lookat(np.array([0, -8, 0.5]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
 pc_program['radius'] = .03
+
+line_program['modelview'] = lookat(np.array([0, -8, 0.5]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
+line_program['radius'] = .03
 
 # Load colors
 with open(sys.argv[2], "r") as f:
@@ -169,6 +205,10 @@ with open(sys.argv[1], "r") as f:
 
 pc_program['pos'] = lidar 
 
+# Line data
+line_program['pos'] = np.array([[3.648024, -0.420327, -0.135129], [3.414222, -1.281418, -0.067780]])
+line_program['color'] = np.array([[1, 1, 1], [1, 1, 1]])
+
 window = app.Window(width=1280, height=720)
 
 @window.event
@@ -177,13 +217,16 @@ def on_resize(width, height):
 
     # Load projection matrix
     pc_program['projection'] = perspective(45.0, ratio, 0.1, 100.0)
+    line_program['projection'] = perspective(45.0, ratio, 0.1, 100.0)
 
 @window.event
 def on_draw(dt):
     window.clear()
     gl.glEnable(gl.GL_DEPTH_TEST)
     gl.glEnable(gl.GL_PROGRAM_POINT_SIZE)
-    pc_program.draw(gl.GL_POINTS)
+    gl.glLineWidth(30.0)
+    pc_program.draw(mode=gl.GL_POINTS)
+    line_program.draw(mode=gl.GL_LINES)
 
 @window.event
 def on_mouse_drag(x, y, dx, dy, buttons):
@@ -198,6 +241,7 @@ def on_mouse_drag(x, y, dx, dy, buttons):
     
     rot[3][3] = 1
     pc_program['modelview'] = np.dot(rot, pc_program['modelview'].reshape((4, 4))) 
+    line_program['modelview'] = np.dot(rot, pc_program['modelview'].reshape((4, 4)))
 
 # Run the app
 app.run()
