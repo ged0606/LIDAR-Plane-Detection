@@ -206,18 +206,19 @@ with open(sys.argv[1], "r") as f:
 pc_program['pos'] = lidar 
 
 # Load line data
-with open(sys.argv[3], "r") as f:
-  line_coords = []
-  line_colors = []
-  for line in f.readlines():
-    values = [float(x) for x in line.split(',')]
-    line_coords.append((values[0], values[1], values[2]))
-    line_coords.append((values[3], values[4], values[5]))
-    line_colors.append((values[6], values[7], values[8]))
-    line_colors.append((values[6], values[7], values[8]))
-
-line_program['pos'] = line_coords 
-line_program['color'] = line_colors 
+if len(sys.argv) > 3:
+  with open(sys.argv[3], "r") as f:
+    line_coords = []
+    line_colors = []
+    for line in f.readlines():
+      values = [float(x) for x in line.split(',')]
+      line_coords.append((values[0], values[1], values[2]))
+      line_coords.append((values[3], values[4], values[5]))
+      line_colors.append((values[6], values[7], values[8]))
+      line_colors.append((values[6], values[7], values[8]))
+  
+  line_program['pos'] = line_coords 
+  line_program['color'] = line_colors 
 
 window = app.Window(width=1280, height=720)
 
@@ -227,7 +228,8 @@ def on_resize(width, height):
 
     # Load projection matrix
     pc_program['projection'] = perspective(45.0, ratio, 0.1, 100.0)
-    line_program['projection'] = perspective(45.0, ratio, 0.1, 100.0)
+    if len(sys.argv) > 3:
+        line_program['projection'] = perspective(45.0, ratio, 0.1, 100.0)
 
 @window.event
 def on_draw(dt):
@@ -236,7 +238,8 @@ def on_draw(dt):
     gl.glEnable(gl.GL_PROGRAM_POINT_SIZE)
     gl.glLineWidth(30.0)
     pc_program.draw(mode=gl.GL_POINTS)
-    line_program.draw(mode=gl.GL_LINES)
+    if len(sys.argv) > 3:
+        line_program.draw(mode=gl.GL_LINES)
 
 @window.event
 def on_mouse_drag(x, y, dx, dy, buttons):
@@ -251,7 +254,8 @@ def on_mouse_drag(x, y, dx, dy, buttons):
     
     rot[3][3] = 1
     pc_program['modelview'] = np.dot(rot, pc_program['modelview'].reshape((4, 4))) 
-    line_program['modelview'] = np.dot(rot, pc_program['modelview'].reshape((4, 4)))
+    if len(sys.argv) > 3:
+        line_program['modelview'] = np.dot(rot, pc_program['modelview'].reshape((4, 4)))
 
 # Run the app
 app.run()
