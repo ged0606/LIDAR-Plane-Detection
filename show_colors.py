@@ -191,23 +191,23 @@ pc_program['radius'] = .03
 line_program['modelview'] = lookat(np.array([0, -8, 0.5]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
 line_program['radius'] = .03
 
-# Load colors
-with open(sys.argv[2], "r") as f:
-  color = [[float(x) for x in line.split(',')] for line in f.readlines()]
-  color = np.array(color)
-
-pc_program['color'] = color 
-
 # Load point cloud
 with open(sys.argv[1], "r") as f:
-  lidar = [[float(x) for x in line.split(',')] for line in f.readlines()]
+  lidar = []
+  lidar_color = []
+  for line in f.readlines():
+    values = [float(x) for x in line.split(',')]
+    lidar.append(values[:3])
+    lidar_color.append(values[3:])
   lidar = np.array(lidar)
+  lidar_color = np.array(lidar_color)
 
 pc_program['pos'] = lidar 
+pc_program['color'] = lidar_color 
 
 # Load line data
-if len(sys.argv) > 3:
-  with open(sys.argv[3], "r") as f:
+if len(sys.argv) > 2:
+  with open(sys.argv[2], "r") as f:
     line_coords = []
     line_colors = []
     for line in f.readlines():
@@ -228,7 +228,7 @@ def on_resize(width, height):
 
     # Load projection matrix
     pc_program['projection'] = perspective(45.0, ratio, 0.1, 100.0)
-    if len(sys.argv) > 3:
+    if len(sys.argv) > 2:
         line_program['projection'] = perspective(45.0, ratio, 0.1, 100.0)
 
 @window.event
@@ -238,7 +238,7 @@ def on_draw(dt):
     gl.glEnable(gl.GL_PROGRAM_POINT_SIZE)
     gl.glLineWidth(30.0)
     pc_program.draw(mode=gl.GL_POINTS)
-    if len(sys.argv) > 3:
+    if len(sys.argv) > 2:
         line_program.draw(mode=gl.GL_LINES)
 
 @window.event
@@ -254,7 +254,7 @@ def on_mouse_drag(x, y, dx, dy, buttons):
     
     rot[3][3] = 1
     pc_program['modelview'] = np.dot(rot, pc_program['modelview'].reshape((4, 4))) 
-    if len(sys.argv) > 3:
+    if len(sys.argv) > 2:
         line_program['modelview'] = np.dot(rot, pc_program['modelview'].reshape((4, 4)))
 
 # Run the app

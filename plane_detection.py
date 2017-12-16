@@ -209,7 +209,7 @@ def cluster_points_by_normals(lidar_table, normal_img, depths,
                             diff = np.abs(depths[new_x, new_y] - depths[x, y])
     
                             if merge not in merges:
-                                if diff < 0.2 and angle < np.pi / 12:
+                                if diff < 0.2 and angle < np.pi / 36:
                                     merges[merge] = angle
                             elif diff < 0.2:
                                 merges[merge] = min(angle, merges[merge])
@@ -261,9 +261,12 @@ def cluster_points_by_normals(lidar_table, normal_img, depths,
 
     return valid_clusters
 
-if __name__ == "__main__":
-    lidar_table = sort_lidar_file_and_shape(sys.argv[1], sys.argv[2])
-
+def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
+                  points_file_name="cluster_points.csv", board_file_name="cluster_lines.csv",
+                  ply_file_name="detected_planes.ply"):
+    lidar_table = sort_lidar_file_and_shape(lidar_file_name, calibration_file_name)
+    
+    print("Calculate Depths")
     depths = np.linalg.norm(lidar_table, axis=-1)
 
     print("Calculate Normals")
@@ -271,34 +274,56 @@ if __name__ == "__main__":
 
     print("Clustering")
     clusters = cluster_points_by_normals(lidar_table, normal_img, depths)
-
-    board_rectangle = None
+  
+    boards = []
     minimum_dist = float('inf')
+    
+    red = np.array([1, 0, 0])
+    yellow = np.array([1, 1, 0])
+    green = np.array([0, 1, 0])
+    blue = np.array([0, 0, 1])
 
-    with open("cluster_points.csv", 'w') as f1, open("cluster_colors.csv", 'w') as f2, \
-         open("cluster_lines.csv", "w") as f3:
+    with open(points_file_name, 'w') as f1, open(board_file_name, "w") as f3:
         for cluster in clusters:
-            color = (random.random(), random.random(), random.random())
             for point in cluster.points:
-                f1.write("{}, {}, {}\n".format(point[0], point[1], point[2]))
-                f2.write("{}, {}, {}\n".format(color[0], color[1], color[2]))
-            if len(cluster.points) >= 3:
+                dist = np.linalg.norm(point)
+                if dist < 4.0:
+                    dist /= 4.0
+                    color = (1.0 - dist) * red + dist * yellow
+                elif dist < 8.0:
+                    dist -= 4.0
+                    dist /= 4.0
+                    color = (1.0 - dist) * yellow + dist * green
+                else:
+                    dist -= 8.0
+                    dist /= 4.0
+                    if dist < 1:
+                        color = (1.0 - dist) * green + dist * blue
+                    else:
+                        color = blue
+                    
+                f1.write("{}, {}, {}, {}, {}, {}\n".format(point[0], point[1], point[2], 
+                                                           color[0], color[1], color[2]))
+            if len(cluster.points) >= 3 and cluster.normal[2] < 0.7:
                 hull = minimum_rectangle(np.array(cluster.points))
-                side1_length = np.linalg.norm(hull[0] - hull[1])
-                side2_length = np.linalg.norm(hull[1] - hull[2])
-                longside = max(side1_length, side2_length)
-                shortside = min(side1_length, side2_length)
-                if longside >= 0.9 and longside <= 1.0 and shortside >= 0.5 and shortside <= 0.7:
-                    dist = np.linalg.norm(np.average(np.array(cluster.points), axis = 0))
-                    if dist < minimum_dist:
-                        minimum_dist = dist
-                        board_rectangle = hull  
-        if board_rectangle is not None:
-            for i in range(len(board_rectangle)):
-                point1 = board_rectangle[i]
-                point2 = board_rectangle[(i + 1) % len(board_rectangle)]
-                f3.write("{}, {}, {}, {}, {}, {}, {}, {}, {}\n".format(point1[0], point1[1], point1[2],
-                                                                       point2[0], point2[1], point2[2],
-                                                                       1, 1, 1))
+                if len(hull) > 0:
+                    side1_length = np.linalg.norm(hull[0] - hull[1])
+                    side2_length = np.linalg.norm(hull[1] - hull[2])
+                    longside = max(side1_length, side2_length)
+                    shortside = min(side1_length, side2_length)
+                    if longside >= 0.8 and longside <= 1.0 and shortside >= 0.6 and shortside <= 0.8:
+                        boards.append(hull)
+        if boards is not None:
+            for board_rectangle in boards:
+                for i in range(len(board_rectangle)):
+                    point1 = board_rectangle[i]
+                    point2 = board_rectangle[(i + 1) % len(board_rectangle)]
+                    f3.write("{}, {}, {}, {}, {}, {}, {}, {}, {}\n".format(point1[0], point1[1], point1[2],
+                                                                           point2[0], point2[1], point2[2],
+                                                                           1, 1, 1))
         else:
             print("Calibration board not detected.")
+
+if __name__ == "__main__":
+    detect_planes(sys.argv[1], sys.argv[2])
+
