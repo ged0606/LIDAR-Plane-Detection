@@ -185,10 +185,10 @@ pc_program = gloo.Program(vert_shader, frag_shader)
 line_program = gloo.Program(vert_shader, frag_shader_line)
 
 # Load uniforms
-pc_program['modelview'] = lookat(np.array([0, -8, 0.5]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
+pc_program['modelview'] = lookat(np.array([0, -8, 0.7]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
 pc_program['radius'] = .03
 
-line_program['modelview'] = lookat(np.array([0, -8, 0.5]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
+line_program['modelview'] = lookat(np.array([0, -8, 0.7]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
 line_program['radius'] = .03
 
 # Load point cloud
@@ -227,9 +227,9 @@ def on_resize(width, height):
     ratio = width / float(height)
 
     # Load projection matrix
-    pc_program['projection'] = perspective(45.0, ratio, 0.1, 100.0)
+    pc_program['projection'] = perspective(30.0, ratio, 0.1, 100.0)
     if len(sys.argv) > 2:
-        line_program['projection'] = perspective(45.0, ratio, 0.1, 100.0)
+        line_program['projection'] = perspective(30.0, ratio, 0.1, 100.0)
 
 @window.event
 def on_draw(dt):

@@ -1,3 +1,4 @@
+from numba import jit
 import numpy as np
 import pandas as pd
 import random
@@ -97,7 +98,8 @@ def sort_lidar_file_and_shape(lidar_file_name, yaml_file_name, width=2088, heigh
     
     return img
 
-def calculate_normals(lidar_table, depths, neighbor_y_radius=5, neighbor_x_radius=5,
+@jit
+def calculate_normals(lidar_table, depths, neighbor_y_radius=9, neighbor_x_radius=9,
                       width=2088, height=64):
     normals = np.zeros(lidar_table.shape)
     for i in range(neighbor_y_radius, height-neighbor_y_radius - 1):
@@ -144,12 +146,12 @@ def calculate_normals(lidar_table, depths, neighbor_y_radius=5, neighbor_x_radiu
     return normals  
 
 class Cluster:
-    def __init__(self, normal, num):
-        self.count = 1
+    def __init__(self, normal, num, point, pca_min=6):
         self.normal = normal
         self.id = num
-        self.points = []
+        self.points = [point]
         self.evecs = None
+        self.pca_min = pca_min
         
     def add_normal(self, normal):
         self.normal = (self.normal * self.count + normal) / (self.count + 1)
@@ -158,11 +160,29 @@ class Cluster:
     def remove_normal(self, normal):
         self.normal = (self.normal * self.count - normal) / (self.count - 1)
 
+    def merge_with(self, cluster):
+        self.normal = (len(self.points) * self.normal + len(cluster.points) * cluster.normal) \
+                      / (len(self.points) + len(cluster.points))
+        self.normal /= np.linalg.norm(self.normal)
+        self.points += cluster.points
+        # Do PCA only when the cluster has at least self.pca_min points
+        #if len(self.points) >= self.pca_min:
+        #    covariance = np.cov(np.array(self.points), rowvar=False)
+        #    eigvals, eigvecs = np.linalg.eigh(covariance)
+        #    self.normal = eigvecs[:, 0]
+        #    self.normal /= np.linalg.norm(self.normal)
+        #    if np.dot(self.normal, np.array([0, 1, 0]) - 
+        #          self.points[0]) <= 0:
+        #        self.normal = -self.normal
+        #else:
+        #    self.normal = (self.normal * (len(self.points) - len(cluster.points))  
+        #                 + cluster.normal * len(cluster.points)) / len(self.points)
+
 def cluster_points_by_normals(lidar_table, normal_img, depths, 
-                              neighbor_y_radius=5, neighbor_x_radius=5,
+                              neighbor_y_radius=5,
                               width=2088, height=64):
 
-    cluster_assignments = [ [Cluster(normal_img[i, j], i * normal_img.shape[1] + j) 
+    cluster_assignments = [ [Cluster(normal_img[i, j], i * normal_img.shape[1] + j, lidar_table[i, j]) 
                              for j in range(normal_img.shape[1])]
                            for i in range(normal_img.shape[0]) ]
     id_to_cluster = []
@@ -189,9 +209,9 @@ def cluster_points_by_normals(lidar_table, normal_img, depths,
                 normal = cluster.normal
                 new_cluster = None
     
-                for dx in range(0, 2):
-                    for dy in range(0, 2):
-                        new_x = x + dx
+                for dx in range(0, 4):
+                    for dy in range(0, 4):
+                        new_x = (x + dx) % normal_img.shape[0]
     
                         new_y = (y + dy) % normal_img.shape[1]
     
@@ -209,7 +229,7 @@ def cluster_points_by_normals(lidar_table, normal_img, depths,
                             diff = np.abs(depths[new_x, new_y] - depths[x, y])
     
                             if merge not in merges:
-                                if diff < 0.2 and angle < np.pi / 36:
+                                if diff < 0.2 and angle < .06:
                                     merges[merge] = angle
                             elif diff < 0.2:
                                 merges[merge] = min(angle, merges[merge])
@@ -231,8 +251,8 @@ def cluster_points_by_normals(lidar_table, normal_img, depths,
                 cluster_id_to_coords[current_cluster] = []
                 new_cluster = id_to_cluster[min_merge_candidate]
                 for coord in coords:
-                    new_cluster.add_normal(normal_img[coord[0]][coord[1]])
                     cluster_assignments[coord[0]][coord[1]] = new_cluster
+                new_cluster.merge_with(id_to_cluster[current_cluster])
                 cluster_id_to_coords[min_merge_candidate] += coords
                 min_merge_angle = np.pi
                 if i < len(potential_merges) - 1:
@@ -251,19 +271,16 @@ def cluster_points_by_normals(lidar_table, normal_img, depths,
     valid_clusters = []
     for i in range(len(valid_cluster_assignments)):
         for j in range(len(valid_cluster_assignments[i])):
+            cluster = valid_cluster_assignments[i][j]
             if cluster.id not in valid_cluster_ids:
                 valid_cluster_ids.add(cluster.id)
                 valid_clusters.append(cluster)
-                cluster.points = []
-            cluster = valid_cluster_assignments[i][j]
-            point = valid_lidars[i, j]
-            cluster.points.append(point)
-
     return valid_clusters
 
 def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
                   points_file_name="cluster_points.csv", board_file_name="cluster_lines.csv",
-                  ply_file_name="detected_planes.ply"):
+                  plane_ply_file_name="detected_planes.ply", normal_ply_file_name="normals.ply"):
+
     lidar_table = sort_lidar_file_and_shape(lidar_file_name, calibration_file_name)
     
     print("Calculate Depths")
@@ -274,6 +291,9 @@ def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
 
     print("Clustering")
     clusters = cluster_points_by_normals(lidar_table, normal_img, depths)
+
+    cluster_colors = [(random.random(), random.random(), random.random()) 
+                      for i in range(len(clusters))]
   
     boards = []
     minimum_dist = float('inf')
@@ -283,24 +303,29 @@ def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
     green = np.array([0, 1, 0])
     blue = np.array([0, 0, 1])
 
-    with open(points_file_name, 'w') as f1, open(board_file_name, "w") as f3:
-        for cluster in clusters:
+    with open(points_file_name, 'w') as f1, open(plane_ply_file_name, 'w') as f2, \
+         open(board_file_name, "w") as f3, open(normal_ply_file_name, 'w') as f4:
+        num_points = 0
+        for i in range(len(clusters)):
+            cluster = clusters[i]
+            color = cluster_colors[i]
+            num_points += len(cluster.points)
             for point in cluster.points:
-                dist = np.linalg.norm(point)
-                if dist < 4.0:
-                    dist /= 4.0
-                    color = (1.0 - dist) * red + dist * yellow
-                elif dist < 8.0:
-                    dist -= 4.0
-                    dist /= 4.0
-                    color = (1.0 - dist) * yellow + dist * green
-                else:
-                    dist -= 8.0
-                    dist /= 4.0
-                    if dist < 1:
-                        color = (1.0 - dist) * green + dist * blue
-                    else:
-                        color = blue
+                #dist = np.linalg.norm(point)
+                #if dist < 4.0:
+                #    dist /= 4.0
+                #    color = (1.0 - dist) * red + dist * yellow
+                #elif dist < 8.0:
+                #    dist -= 4.0
+                #    dist /= 4.0
+                #    color = (1.0 - dist) * yellow + dist * green
+                #else:
+                #    dist -= 8.0
+                #    dist /= 4.0
+                #    if dist < 1:
+                #        color = (1.0 - dist) * green + dist * blue
+                #    else:
+                #        color = blue
                     
                 f1.write("{}, {}, {}, {}, {}, {}\n".format(point[0], point[1], point[2], 
                                                            color[0], color[1], color[2]))
@@ -311,8 +336,26 @@ def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
                     side2_length = np.linalg.norm(hull[1] - hull[2])
                     longside = max(side1_length, side2_length)
                     shortside = min(side1_length, side2_length)
-                    if longside >= 0.8 and longside <= 1.0 and shortside >= 0.6 and shortside <= 0.8:
+                    if longside >= 0.8 and longside <= 1.0 and shortside >= 0.5 and shortside <= 0.7:
                         boards.append(hull)
+        # Plane ply file
+        f2.write("ply\n")
+        f2.write("format ascii 1.0\n")
+        f2.write("element vertex {}\n".format(num_points))
+        f2.write("property float32 x\n")
+        f2.write("property float32 y\n")
+        f2.write("property float32 z\n")
+        f2.write("property float32 nx\n")
+        f2.write("property float32 ny\n")
+        f2.write("property float32 nz\n")
+        f2.write("end_header\n")
+
+        for i in range(len(clusters)):
+            cluster = clusters[i]
+            normal = cluster.normal
+            for point in cluster.points:
+                f2.write("{} {} {} {} {} {}\n".format(point[0], point[1], point[2], 
+                                                           normal[0], normal[1], normal[2]))
         if boards is not None:
             for board_rectangle in boards:
                 for i in range(len(board_rectangle)):
@@ -321,8 +364,27 @@ def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
                     f3.write("{}, {}, {}, {}, {}, {}, {}, {}, {}\n".format(point1[0], point1[1], point1[2],
                                                                            point2[0], point2[1], point2[2],
                                                                            1, 1, 1))
+
         else:
             print("Calibration board not detected.")
+
+        # Normal ply file
+        f4.write("ply\n")
+        f4.write("format ascii 1.0\n")
+        f4.write("element vertex {}\n".format(num_points))
+        f4.write("property float32 x\n")
+        f4.write("property float32 y\n")
+        f4.write("property float32 z\n")
+        f4.write("property float32 nx\n")
+        f4.write("property float32 ny\n")
+        f4.write("property float32 nz\n")
+        f4.write("end_header\n")
+        for i in range(lidar_table.shape[0]):
+            for j in range(lidar_table.shape[1]):
+                point = lidar_table[i][j]
+                normal = normal_img[i][j]
+                f4.write("{} {} {} {} {} {}\n".format(point[0], point[1], point[2], 
+                                                           normal[0], normal[1], normal[2]))
 
 if __name__ == "__main__":
     detect_planes(sys.argv[1], sys.argv[2])
