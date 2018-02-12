@@ -3,7 +3,7 @@ import os
 
 calibration_file = '64HDL_S2.yaml'
 
-directory = '../2017-11-04-11-04-17_0/'
+directory = '../test_lidar/'
 files = os.listdir(directory)
 
 save_dir = 'detection/'

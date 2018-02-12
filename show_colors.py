@@ -185,10 +185,10 @@ pc_program = gloo.Program(vert_shader, frag_shader)
 line_program = gloo.Program(vert_shader, frag_shader_line)
 
 # Load uniforms
-pc_program['modelview'] = lookat(np.array([0, -8, 0.7]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
+pc_program['modelview'] = lookat(np.array([0, -8, 0.5]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
 pc_program['radius'] = .03
 
-line_program['modelview'] = lookat(np.array([0, -8, 0.7]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
+line_program['modelview'] = lookat(np.array([0, -8, 0.5]), np.array([0, 0, 0]), np.array([0, 0, 1])) 
 line_program['radius'] = .03
 
 # Load point cloud
