@@ -1,80 +1,14 @@
+import matplotlib.path as mplPath
 from numba import jit
 import numpy as np
 import pandas as pd
 import random
+import scipy.optimize
 from scipy.spatial import ConvexHull
 from scipy.spatial.qhull import QhullError
 from sklearn.decomposition import PCA
 import sys
 import yaml
-
-
-def minimum_rectangle(points_3d):
-    plane_center = np.average(points_3d, axis=0)
-    points_3d -= plane_center
-
-    # Get basis vectors for plane
-    covariance = np.cov(points_3d, rowvar=False)
-    eigvals, eigvecs = np.linalg.eigh(covariance)
-    v1 = eigvecs[:, 1]
-    v2 = eigvecs[:, 2]
-
-    basis_change = np.vstack((v1, v2))
-
-    projection = points_3d.dot(basis_change.T)
-    try:
-        hull = ConvexHull(projection)
-        hull_vertices = projection[hull.vertices]
-
-        edges = np.zeros((len(hull_vertices)-1, 2))
-        edges = hull_vertices[1:] - hull_vertices[:-1]
-
-        angles = np.zeros((len(edges)))
-        angles = np.arctan2(edges[:, 1], edges[:, 0])
-
-        pi2 = np.pi / 2.0
-        angles = np.abs(np.mod(angles, pi2))
-        angles = np.unique(angles)
-
-        rotations = np.vstack([
-            np.cos(angles),
-            np.cos(angles-pi2),
-            np.cos(angles+pi2),
-            np.cos(angles)
-        ]).T
-        rotations = rotations.reshape((-1, 2, 2))
-
-        # apply rotations to the hull
-        rot_points = np.dot(rotations, hull_vertices.T)
-
-        # find the bounding points
-        min_x = np.nanmin(rot_points[:, 0], axis=1)
-        max_x = np.nanmax(rot_points[:, 0], axis=1)
-        min_y = np.nanmin(rot_points[:, 1], axis=1)
-        max_y = np.nanmax(rot_points[:, 1], axis=1)
-
-        # find the box with the best area
-        areas = (max_x - min_x) * (max_y - min_y)
-        best_idx = np.argmin(areas)
-
-        # return the best box
-        x1 = max_x[best_idx]
-        x2 = min_x[best_idx]
-        y1 = max_y[best_idx]
-        y2 = min_y[best_idx]
-        r = rotations[best_idx]
-
-        rval = np.zeros((4, 2))
-        rval[0] = np.dot([x1, y2], r)
-        rval[1] = np.dot([x2, y2], r)
-        rval[2] = np.dot([x2, y1], r)
-        rval[3] = np.dot([x1, y1], r)
-
-        rval_3d = rval.dot(basis_change)
-
-        return rval_3d + plane_center
-    except QhullError:
-        return []
 
 
 def sort_lidar_file_and_shape(lidar_file_name, yaml_file_name,
@@ -277,6 +211,83 @@ def cluster_points_by_normals(lidar_table, normal_img, depths,
                 valid_clusters.append(cluster)
     return valid_clusters
 
+bottom_left= np.array([-.254, -.381])
+top_left = np.array([-.254, .381])
+top_right = np.array([.254, .381])
+bottom_right = np.array([.254, -.381])
+board = np.vstack((bottom_left, top_left, top_right, bottom_right))
+
+def find_boards(clusters):
+    def cost_function_for_points(projection):
+        def func(a):
+            x = a[0]
+            y = a[1]
+            theta = a[2]
+            rot = np.array([[np.cos(theta), -np.sin(theta)], 
+                            [np.sin(theta), np.cos(theta)]])
+            rectangle = np.matmul(board, rot.T) + a[:2]
+            
+            distances = np.zeros((projection.shape[0], 
+                                  rectangle.shape[0]))
+            for j in range(rectangle.shape[0]):
+                p1 = rectangle[j] 
+                p2 = rectangle[(j + 1) % rectangle.shape[0]]
+                distances[:, j] = (p2[1] - p1[1]) * projection[:, 0] - (p2[0] - p1[0]) * projection[:, 1] + p2[0] * p1[1] - p2[1] * p1[0]
+                distances[:, j] = np.abs(distances[:, j]) / np.linalg.norm(p2 - p1)
+            return np.sum(np.min(distances, axis=1))
+        return func
+    
+    boards = []
+    for cluster in clusters:
+        if len(cluster.points) < 3:
+            continue
+
+        points = np.array(cluster.points)
+        plane_center = np.average(points, axis=0)
+        points -= plane_center
+
+        # Get basis vectors for plane
+        covariance = np.cov(points, rowvar=False)
+        eigvals, eigvecs = np.linalg.eigh(covariance)
+        v1 = eigvecs[:, 1]
+        v2 = eigvecs[:, 2]
+
+        basis_change = np.vstack((v1, v2))
+
+        projection = points.dot(basis_change.T)
+        
+        try:
+            hull = ConvexHull(projection)
+            hull_vertices = projection[hull.vertices]
+
+            cost_func = cost_function_for_points(hull_vertices)
+            sol = scipy.optimize.least_squares(cost_func, (0, 0, 0))
+            cost = sol.cost
+
+            theta = sol.x[2]
+            rot = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+            rect = np.matmul(board, rot.T) + sol.x[:2]
+
+            AB = rect[1] - rect[0]
+            BC = rect[2] - rect[1]
+            AM = projection - rect[0]
+            BM = projection - rect[1]
+            AB_AM = np.matmul(AM, AB)
+            AB_AB = AB.dot(AB)
+            BC_BM = BM.dot(BC)
+            BC_BC = BC.dot(BC)
+            
+            valid = np.logical_and(np.logical_and(AB_AM >= 0, AB_AM <= AB_AB), np.logical_and(BC_BM >= 0, BC_BM <= BC_BC))
+
+            cost += projection.shape[0] - 2 * np.sum(valid)
+
+            rect3d = rect.dot(basis_change) + plane_center
+            boards.append((cost, rect3d))
+        except QhullError:
+            pass
+
+    boards.sort(key = lambda x: x[0])
+    return [b[1] for b in boards[:5]]
 
 def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
                   points_file_name="cluster_points.csv", board_file_name="cluster_lines.csv",
@@ -330,15 +341,6 @@ def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
                     
                 f1.write("{}, {}, {}, {}, {}, {}\n".format(point[0], point[1], point[2], 
                                                            color[0], color[1], color[2]))
-            if len(cluster.points) >= 3 and cluster.normal[2] < 0.7:
-                hull = minimum_rectangle(np.array(cluster.points))
-                if len(hull) > 0:
-                    side1_length = np.linalg.norm(hull[0] - hull[1])
-                    side2_length = np.linalg.norm(hull[1] - hull[2])
-                    longside = max(side1_length, side2_length)
-                    shortside = min(side1_length, side2_length)
-                    if longside >= 0.65 and longside <= .85 and shortside >= 0.4 and shortside <= 0.6:
-                        boards.append(hull)
         # Plane ply file
         f2.write("ply\n")
         f2.write("format ascii 1.0\n")
@@ -357,17 +359,14 @@ def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
             for point in cluster.points:
                 f2.write("{} {} {} {} {} {}\n".format(point[0], point[1], point[2], 
                                                            normal[0], normal[1], normal[2]))
-        if boards is not None:
-            for board_rectangle in boards:
-                for i in range(len(board_rectangle)):
-                    point1 = board_rectangle[i]
-                    point2 = board_rectangle[(i + 1) % len(board_rectangle)]
-                    f3.write("{}, {}, {}, {}, {}, {}, {}, {}, {}\n".format(point1[0], point1[1], point1[2],
-                                                                           point2[0], point2[1], point2[2],
-                                                                           1, 1, 1))
-
-        else:
-            print("Calibration board not detected.")
+        boards = find_boards(clusters)
+        for board_rectangle in boards:
+            for i in range(len(board_rectangle)):
+                point1 = board_rectangle[i]
+                point2 = board_rectangle[(i + 1) % len(board_rectangle)]
+                f3.write("{}, {}, {}, {}, {}, {}, {}, {}, {}\n".format(point1[0], point1[1], point1[2],
+                                                                       point2[0], point2[1], point2[2],
+                                                                       1, 1, 1))
 
         # Normal ply file
         f4.write("ply\n")
