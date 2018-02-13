@@ -33,7 +33,7 @@ def sort_lidar_file_and_shape(lidar_file_name, yaml_file_name,
 
 @jit
 def calculate_normals(lidar_table, depths,
-                      neighbor_y_radius=9, neighbor_x_radius=9,
+                      neighbor_y_radius=5, neighbor_x_radius=5,
                       width=2088, height=64):
     normals = np.zeros(lidar_table.shape)
     for i in range(neighbor_y_radius, height-neighbor_y_radius - 1):
@@ -151,7 +151,6 @@ def cluster_points_by_normals(lidar_table, normal_img, depths,
 
                         temp_cluster = cluster_assignments[new_x][new_y]
                         if temp_cluster.id != cluster.id:
-                            dont_check_current = 0
 
                             merge = (min(temp_cluster.id, cluster.id), 
                                      max(temp_cluster.id, cluster.id)) 
@@ -164,13 +163,14 @@ def cluster_points_by_normals(lidar_table, normal_img, depths,
 
                             if merge not in merges:
                                 if diff < 0.07 and angle < .06:
+                                    dont_check_current = 0
                                     merges[merge] = angle
                             elif diff < 0.07:
+                                dont_check_current = 0
                                 merges[merge] = min(angle, merges[merge])
 
                 dont_check[x, y] = dont_check_current
 
-        print("Potential Merges: {}".format(len(merges)))
         if len(merges) == 0:
             break
 
@@ -244,6 +244,10 @@ def find_boards(clusters):
 
         points = np.array(cluster.points)
         plane_center = np.average(points, axis=0)
+
+        if np.linalg.norm(plane_center) < 3:
+            continue
+
         points -= plane_center
 
         # Get basis vectors for plane
@@ -287,7 +291,7 @@ def find_boards(clusters):
             pass
 
     boards.sort(key = lambda x: x[0])
-    return [b[1] for b in boards[:5]]
+    return [b[1] for b in boards[:3]]
 
 def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
                   points_file_name="cluster_points.csv", board_file_name="cluster_lines.csv",
@@ -306,7 +310,8 @@ def detect_planes(lidar_file_name, calibration_file_name, width=2088, height=64,
 
     cluster_colors = [(random.random(), random.random(), random.random()) 
                       for i in range(len(clusters))]
-  
+
+    print("Detecting Boards") 
     boards = []
     minimum_dist = float('inf')
     
